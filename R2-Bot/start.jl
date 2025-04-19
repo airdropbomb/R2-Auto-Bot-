@@ -20,6 +20,12 @@ if !isfile(DATA_PATH)
     names = ["Alice", "Bob", "Charlie", "Diana"]
     regions = ["North", "South", "East", "West"]
     products = ["Widget", "Gadget", "Thingy", "Doohickey"]
+  ==== Section 1: Generate Fake Data (if not exists) ====
+if !isfile(DATA_PATH)
+    println("Generating fake data...")
+    names = ["Alice", "Bob", "Charlie", "Diana"]
+    regions = ["North", "South", "East", "West"]
+    products = ["Widget", "Gadget", "Thingy", "Doohickey"]
 
     df = DataFrame(Date=Date[], Name=String[], Region=String[], Product=String[], Quantity=Int[], Price=Float64[])
     for i in 1:1000
