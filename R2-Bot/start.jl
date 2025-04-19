@@ -2307,6 +2307,105 @@ if !isfile(DATA_PATH)
     names = ["Alice", "Bob", "Charlie", "Diana"]
     regions = ["North", "South", "East", "West"]
     products = ["Widget", "Gadget", "Thingy", "Doohickey"]
+using HTTP
+using Gumbo
+using CSV
+using DataFrames
+
+# Function to fetch and parse HTML from a URL
+function fetch_html(url::String)
+    try
+        # Send a GET request to the website
+        response = HTTP.get(url)
+        
+        if response.status != 200
+            error("Failed to fetch URL: $url with status code $(response.status)")
+        end
+        
+        return String(response.body)
+    catch e
+        println("Error fetching the webpage: ", e)
+        return ""
+    end
+end
+
+# Function to scrape all links on the page (as an example)
+function scrape_links(parsed_html)
+    # Find all anchor <a> tags in the parsed HTML
+    links = []
+    for element in eachmatch(r"<a[^>]+href=\"([^\"]+)\"", parsed_html)
+        push!(links, element.match[1])  # Extract the URL from the href attribute
+    end
+    return links
+end
+
+# Function to scrape headings (<h1>, <h2>, <h3>, etc.) from the page
+function scrape_headings(parsed_html)
+    headings = Dict()
+    for h_tag in 1:6  # For h1, h2, ..., h6
+        tag_name = "h" * string(h_tag)
+        headings[tag_name] = []
+        
+        for element in eachmatch(r"<$tag_name[^>]*>(.*?)</$tag_name>", parsed_html)
+            push!(headings[tag_name], strip(element.match[1]))  # Extract and clean the text
+        end
+    end
+    return headings
+end
+
+# Function to extract text from all <p> tags (paragraphs)
+function scrape_paragraphs(parsed_html)
+    paragraphs = []
+    for element in eachmatch(r"<p[^>]*>(.*?)</p>", parsed_html)
+        push!(paragraphs, strip(element.match[1]))  # Extract the text inside <p> tags
+    end
+    return paragraphs
+end
+
+# Function to parse and process the HTML
+function parse_html(url::String)
+    html_content = fetch_html(url)
+    
+    if html_content == ""
+        return
+    end
+    
+    # Parse the HTML content using Gumbo
+    parsed_html = parsehtml(html_content)
+
+    # Scrape links, headings, and paragraphs
+    links = scrape_links(html_content)
+    headings = scrape_headings(html_content)
+    paragraphs = scrape_paragraphs(html_content)
+    
+    # Store the results in a DataFrame
+    data = DataFrame(
+        Heading1 = headings["h1"],
+        Heading2 = headings["h2"],
+        Paragraph = paragraphs
+    )
+    
+    # Print out the scraped content (optional)
+    println("Links found on the page:")
+    println(links)
+
+    println("\nHeadings found on the page:")
+    for (key, value) in headings
+        println("$key: $value")
+    end
+
+    println("\nParagraphs found on the page:")
+    println(paragraphs)
+
+    # Save the data to a CSV file
+    CSV.write("scraped_data.csv", data)
+    
+    println("\nScraped data has been saved to 'scraped_data.csv'.")
+end
+
+# Example usage
+url = "https://example.com"  # Change this to any webpage you want to scrape
+parse_html(url)
 
     df = DataFrame(Date=Date[], Name=String[], Region=String[], Product=String[], Quantity=Int[], Price=Float64[])
     for i in 1:1000
