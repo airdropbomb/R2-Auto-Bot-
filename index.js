@@ -37,17 +37,26 @@ const ERC20_ABI = [
   'function decimals() external view returns (uint8)',
 ];
 
-const RPC_URLS = [
-  'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://rpc.sepolia.org',
-  // Add Infura/Alchemy RPC if available: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY'
+const NETWORKS = [
+  {
+    name: 'sepolia',
+    chainId: 11155111,
+    explorer: 'https://sepolia.etherscan.io',
+    rpcUrls: [
+      'https://ethereum-sepolia-rpc.publicnode.com',
+      'https://rpc.sepolia.org',
+    ],
+  },
+  {
+    name: 'plume_testnet',
+    chainId: 98867, // Plume Testnet chainId (assumed, please verify)
+    explorer: 'https://testnet-explorer.plumenetwork.xyz', // Update if explorer URL is different
+    rpcUrls: [
+      'https://testnet-rpc.plumenetwork.xyz',
+      'https://testnet-explorer.plumenetwork.xyz/'
+    ],
+  },
 ];
-
-const NETWORK = {
-  name: 'sepolia',
-  chainId: 11155111,
-  explorer: 'https://sepolia.etherscan.io',
-};
 
 // Create neo-blessed screen
 const screen = blessed.screen({
@@ -165,7 +174,7 @@ function loadPrivateKeys() {
       logWindow.log(`${colorText('No valid private keys found in .env (PRIVATE_KEY_*)', COLORS.RED)}`);
       process.exit(1);
     }
-    logWindow.log(`${colorText(`Loaded ${privateKeys.length} private keys from .env`, COLORS.GREEN)}`);
+    logWindow.log(`${colorText(`Loaded ${privateKeys.length} private key(s) from .env`, COLORS.GREEN)}`);
   } catch (error) {
     logWindow.log(`${colorText(`Failed to load private keys from .env: ${error.message}`, COLORS.RED)}`);
     process.exit(1);
@@ -205,17 +214,17 @@ function formatProxy(proxyString) {
   };
 }
 
-async function initializeWallet(privateKey) {
+async function initializeWallet(privateKey, network) {
   try {
     const stopSpinner = showSpinner(
-      'Connecting to Sepolia testnet...',
-      `Connected to Sepolia testnet!`,
+      `Connecting to ${network.name} network...`,
+      `Connected to ${network.name} network!`,
       60
     );
     let provider;
     const proxyString = getRandomProxy();
     let lastError = null;
-    for (const url of RPC_URLS) {
+    for (const url of network.rpcUrls) {
       try {
         if (proxyString) {
           const proxyConfig = formatProxy(proxyString);
@@ -230,11 +239,14 @@ async function initializeWallet(privateKey) {
               url,
               agent,
             },
-            NETWORK
+            { name: network.name, chainId: network.chainId }
           );
         } else {
           logWindow.log(`${colorText(`Using RPC: ${url}`, COLORS.GRAY)}`);
-          provider = new ethers.providers.JsonRpcProvider(url, NETWORK);
+          provider = new ethers.providers.JsonRpcProvider(
+            url,
+            { name: network.name, chainId: network.chainId }
+          );
         }
         await provider.getNetwork();
         logWindow.log(`${colorText(`Connected to RPC: ${url}`, COLORS.GREEN)}`);
@@ -247,14 +259,14 @@ async function initializeWallet(privateKey) {
       }
     }
     if (lastError) {
-      throw new Error(`All RPCs failed: ${lastError.message}`);
+      throw new Error(`All RPCs failed for ${network.name}: ${lastError.message}`);
     }
     stopSpinner();
     const wallet = new ethers.Wallet(privateKey, provider);
-    logWindow.log(`${colorText(`Wallet initialized: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`, COLORS.WHITE)}`);
+    logWindow.log(`${colorText(`Wallet initialized on ${network.name}: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`, COLORS.WHITE)}`);
     return { provider, wallet };
   } catch (error) {
-    logWindow.log(`${colorText(`Failed to initialize wallet for key ${privateKey.slice(0, 6)}...: ${error.message}`, COLORS.RED)}`);
+    logWindow.log(`${colorText(`Failed to initialize wallet for key ${privateKey.slice(0, 6)}... on ${network.name}: ${error.message}`, COLORS.RED)}`);
     throw error;
   }
 }
@@ -281,26 +293,26 @@ async function checkEthBalance(wallet) {
   }
 }
 
-async function updateWalletInfo(wallets) {
+async function updateWalletInfo(wallets, network) {
   const walletInfo = [];
   for (const wallet of wallets) {
     const ethBalance = await checkEthBalance(wallet);
     const usdcBalance = await checkBalance(wallet, USDC_ADDRESS);
     const r2usdBalance = await checkBalance(wallet, R2USD_ADDRESS);
-    const sr2usdBalance = await checkBalance(wallet, SR2USD_ADDRESS);
+    const sr2usdBalance = network.name === 'sepolia' ? await checkBalance(wallet, SR2USD_ADDRESS) : 'N/A';
     walletInfo.push(
       `WALLET: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\n` +
       `ETH: ${parseFloat(ethBalance).toFixed(4)}\n` +
       `USDC: ${parseFloat(usdcBalance).toFixed(2)}\n` +
       `R2USD: ${parseFloat(r2usdBalance).toFixed(2)}\n` +
-      `sR2USD: ${parseFloat(sr2usdBalance).toFixed(2)}\n`
+      `sR2USD: ${network.name === 'sepolia' ? parseFloat(sr2usdBalance).toFixed(2) : 'N/A'}\n`
     );
   }
   infoPanel.setContent(
     '{center}{bold}SYSTEM INFO{/bold}{/center}\n\n' +
     walletInfo.join('---\n') +
     `{green-fg}STATUS: ONLINE{/green-fg}\n` +
-    `{green-fg}NETWORK: ${NETWORK.name} (chainId: ${NETWORK.chainId}){/green-fg}`
+    `{green-fg}NETWORK: ${network.name} (chainId: ${network.chainId}){/green-fg}`
   );
   screen.render();
 }
@@ -329,7 +341,7 @@ async function approveToken(wallet, tokenAddress, spenderAddress, amount) {
     const amountInWei = ethers.utils.parseUnits(amount.toString(), decimals);
     const tx = await tokenContract.approve(spenderAddress, amountInWei, { gasLimit: 100000 });
     logWindow.log(`${colorText(`Approval transaction sent: ${tx.hash}`, COLORS.GREEN)}`);
-    logWindow.log(`${colorText(`Explorer: ${NETWORK.explorer}/tx/${tx.hash}`, COLORS.GRAY)}`);
+    logWindow.log(`${colorText(`Explorer: ${wallet.provider.network.explorer}/tx/${tx.hash}`, COLORS.GRAY)}`);
     const stopSpinner = showSpinner(
       'Waiting for approval confirmation...',
       `Approval confirmed!`,
@@ -338,7 +350,7 @@ async function approveToken(wallet, tokenAddress, spenderAddress, amount) {
     await tx.wait();
     stopSpinner();
     logWindow.log(`${colorText('Approval completed', COLORS.CYAN)}`);
-    await updateWalletInfo([wallet]);
+    await updateWalletInfo([wallet], wallet.provider.network);
     return true;
   } catch (error) {
     logWindow.log(`${colorText(`Failed to approve token: ${error.message}`, COLORS.RED)}`);
@@ -362,7 +374,7 @@ async function estimateGasFees(provider) {
   }
 }
 
-async function swapUSDCtoR2USD(wallet, amount) {
+async function swapUSDCtoR2USD(wallet, amount, network) {
   try {
     const usdcBalance = await checkBalance(wallet, USDC_ADDRESS);
     logWindow.log(`${colorText(`Current USDC balance: ${usdcBalance}`, COLORS.WHITE)}`);
@@ -390,7 +402,7 @@ async function swapUSDCtoR2USD(wallet, amount) {
     };
     const gasLimit = await estimateGas(wallet, tx);
     logWindow.log(`${colorText(`Estimated gas limit: ${gasLimit.toString()}`, COLORS.GRAY)}`);
-    logWindow.log(`${colorText(`Initiating swap: ${amount} USDC to R2USD`, COLORS.YELLOW)}`);
+    logWindow.log(`${colorText(`Initiating swap: ${amount} USDC to R2USD on ${network.name}`, COLORS.YELLOW)}`);
     const stopSpinner = showSpinner(
       `Swapping ${amount} USDC to R2USD...`,
       `Swap completed: ${amount} USDC to R2USD`,
@@ -401,25 +413,25 @@ async function swapUSDCtoR2USD(wallet, amount) {
       gasLimit,
     });
     logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
-    logWindow.log(`${colorText(`Explorer: ${NETWORK.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
+    logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
     await signedTx.wait();
     stopSpinner();
     const newUSDCBalance = await checkBalance(wallet, USDC_ADDRESS);
     const newR2USDBalance = await checkBalance(wallet, R2USD_ADDRESS);
     logWindow.log(`${colorText(`New USDC balance: ${newUSDCBalance}`, COLORS.WHITE)}`);
     logWindow.log(`${colorText(`New R2USD balance: ${newR2USDBalance}`, COLORS.WHITE)}`);
-    await updateWalletInfo([wallet]);
+    await updateWalletInfo([wallet], network);
     return true;
   } catch (error) {
     logWindow.log(`${colorText(`Failed to swap USDC to R2USD: ${error.message}`, COLORS.RED)}`);
     if (error.transactionHash) {
-      logWindow.log(`${colorText(`Failed transaction: ${NETWORK.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
+      logWindow.log(`${colorText(`Failed transaction: ${network.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
     }
     return false;
   }
 }
 
-async function swapR2USDtoUSDC(wallet, amount) {
+async function swapR2USDtoUSDC(wallet, amount, network) {
   try {
     const r2usdBalance = await checkBalance(wallet, R2USD_ADDRESS);
     logWindow.log(`${colorText(`Current R2USD balance: ${r2usdBalance}`, COLORS.WHITE)}`);
@@ -448,7 +460,7 @@ async function swapR2USDtoUSDC(wallet, amount) {
     };
     const gasLimit = await estimateGas(wallet, tx);
     logWindow.log(`${colorText(`Estimated gas limit: ${gasLimit.toString()}`, COLORS.GRAY)}`);
-    logWindow.log(`${colorText(`Initiating swap: ${amount} R2USD to USDC`, COLORS.YELLOW)}`);
+    logWindow.log(`${colorText(`Initiating swap: ${amount} R2USD to USDC on ${network.name}`, COLORS.YELLOW)}`);
     const stopSpinner = showSpinner(
       `Swapping ${amount} R2USD to USDC...`,
       `Swap completed: ${amount} R2USD to USDC`,
@@ -459,7 +471,7 @@ async function swapR2USDtoUSDC(wallet, amount) {
       gasLimit,
     });
     logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
-    logWindow.log(`${colorText(`Explorer: ${NETWORK.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
+    logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
     const receipt = await signedTx.wait();
     stopSpinner();
     if (receipt.status === 0) {
@@ -470,18 +482,22 @@ async function swapR2USDtoUSDC(wallet, amount) {
     const newR2USDBalance = await checkBalance(wallet, R2USD_ADDRESS);
     logWindow.log(`${colorText(`New USDC balance: ${newUSDCBalance}`, COLORS.WHITE)}`);
     logWindow.log(`${colorText(`New R2USD balance: ${newR2USDBalance}`, COLORS.WHITE)}`);
-    await updateWalletInfo([wallet]);
+    await updateWalletInfo([wallet], network);
     return true;
   } catch (error) {
     logWindow.log(`${colorText(`Failed to swap R2USD to USDC: ${error.message}`, COLORS.RED)}`);
     if (error.transactionHash) {
-      logWindow.log(`${colorText(`Failed transaction: ${NETWORK.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
+      logWindow.log(`${colorText(`Failed transaction: ${network.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
     }
     return false;
   }
 }
 
-async function stakeR2USD(wallet, amount) {
+async function stakeR2USD(wallet, amount, network) {
+  if (network.name !== 'sepolia') {
+    logWindow.log(`${colorText(`Staking not supported on ${network.name}`, COLORS.RED)}`);
+    return false;
+  }
   try {
     const r2usdBalance = await checkBalance(wallet, R2USD_ADDRESS);
     logWindow.log(`${colorText(`Current R2USD balance: ${r2usdBalance}`, COLORS.WHITE)}`);
@@ -497,7 +513,7 @@ async function stakeR2USD(wallet, amount) {
       logWindow.log(`${colorText(`Approving ${amount} R2USD for staking...`, COLORS.MAGENTA)}`);
       const approveTx = await r2usdContract.approve(STAKE_R2USD_CONTRACT, amountInWei, { gasLimit: 100000 });
       logWindow.log(`${colorText(`Approval transaction sent: ${approveTx.hash}`, COLORS.GREEN)}`);
-      logWindow.log(`${colorText(`Explorer: ${NETWORK.explorer}/tx/${approveTx.hash}`, COLORS.GRAY)}`);
+      logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${approveTx.hash}`, COLORS.GRAY)}`);
       const stopSpinner = showSpinner(
         'Waiting for approval confirmation...',
         `Approval confirmed!`,
@@ -532,7 +548,7 @@ async function stakeR2USD(wallet, amount) {
       gasLimit,
     });
     logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
-    logWindow.log(`${colorText(`Explorer: ${NETWORK.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
+    logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
     const receipt = await signedTx.wait();
     stopSpinner();
     if (receipt.status === 0) {
@@ -543,12 +559,12 @@ async function stakeR2USD(wallet, amount) {
     const newSR2USDBalance = await checkBalance(wallet, SR2USD_ADDRESS);
     logWindow.log(`${colorText(`New R2USD balance: ${newR2USDBalance}`, COLORS.WHITE)}`);
     logWindow.log(`${colorText(`New sR2USD balance: ${newSR2USDBalance}`, COLORS.WHITE)}`);
-    await updateWalletInfo([wallet]);
+    await updateWalletInfo([wallet], network);
     return true;
   } catch (error) {
     logWindow.log(`${colorText(`Failed to stake R2USD: ${error.message}`, COLORS.RED)}`);
     if (error.transactionHash) {
-      logWindow.log(`${colorText(`Failed transaction: ${NETWORK.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
+      logWindow.log(`${colorText(`Failed transaction: ${network.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
     }
     return false;
   }
@@ -608,7 +624,7 @@ function showBanner() {
 
 async function showMenu(wallets) {
   const menuItems = [
-    `1. Swaps And Staking`,
+    `1. Swaps and Staking`,
     `2. Exit`,
   ];
   logWindow.log(`${colorText('========== R2 AUTO BOT MENU ==========', COLORS.WHITE)}`);
@@ -636,12 +652,12 @@ async function showMenu(wallets) {
 
 async function selectWallet(wallets) {
   if (wallets.length === 1) {
-    logWindow.log(`${colorText(`Using wallet: ${wallets[0].address.slice(0, 6)}...${wallets[0].address.slice(-4)}`, COLORS.WHITE)}`);
+    logWindow.log(`${colorText(`Using wallet: ${wallets[0].wallet.address.slice(0, 6)}...${wallets[0].wallet.address.slice(-4)}`, COLORS.WHITE)}`);
     return wallets[0];
   }
   logWindow.log(`${colorText('Available wallets:', COLORS.WHITE)}`);
-  wallets.forEach((wallet, index) => {
-    logWindow.log(`${colorText(`${index + 1}. ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`, COLORS.YELLOW)}`);
+  wallets.forEach((walletObj, index) => {
+    logWindow.log(`${colorText(`${index + 1}. ${walletObj.wallet.address.slice(0, 6)}...${walletObj.wallet.address.slice(-4)}`, COLORS.YELLOW)}`);
   });
   const input = await getInput('Select wallet number (or "all" for all wallets): ');
   if (input.toLowerCase() === 'all') {
@@ -652,15 +668,40 @@ async function selectWallet(wallets) {
     logWindow.log(`${colorText('Invalid selection. Using first wallet.', COLORS.YELLOW)}`);
     return wallets[0];
   }
-  logWindow.log(`${colorText(`Using wallet: ${wallets[index].address.slice(0, 6)}...${wallets[index].address.slice(-4)}`, COLORS.WHITE)}`);
+  logWindow.log(`${colorText(`Using wallet: ${wallets[index].wallet.address.slice(0, 6)}...${wallets[index].wallet.address.slice(-4)}`, COLORS.WHITE)}`);
   return wallets[index];
+}
+
+async function selectNetwork() {
+  if (NETWORKS.length === 1) {
+    logWindow.log(`${colorText(`Using network: ${NETWORKS[0].name}`, COLORS.WHITE)}`);
+    return [NETWORKS[0]];
+  }
+  logWindow.log(`${colorText('Available networks:', COLORS.WHITE)}`);
+  NETWORKS.forEach((network, index) => {
+    logWindow.log(`${colorText(`${index + 1}. ${network.name}`, COLORS.YELLOW)}`);
+  });
+  const input = await getInput('Select network number (or "all" for all networks): ');
+  if (input.toLowerCase() === 'all') {
+    return NETWORKS;
+  }
+  const index = parseInt(input) - 1;
+  if (isNaN(index) || index < 0 || index >= NETWORKS.length) {
+    logWindow.log(`${colorText('Invalid selection. Using first network.', COLORS.YELLOW)}`);
+    return [NETWORKS[0]];
+  }
+  logWindow.log(`${colorText(`Using network: ${NETWORKS[index].name}`, COLORS.WHITE)}`);
+  return [NETWORKS[index]];
 }
 
 async function handleSwapsAndStaking(wallets) {
   try {
-    const selectedWallets = await selectWallet(wallets);
+    const selectedWallets = wallets.length === 1 ? wallets[0] : await selectWallet(wallets);
     const isAllWallets = Array.isArray(selectedWallets);
     const walletList = isAllWallets ? selectedWallets : [selectedWallets];
+
+    const selectedNetworks = await selectNetwork();
+    const isAllNetworks = selectedNetworks.length > 1;
 
     // Popup for amount and number of transactions
     logWindow.log(`${colorText('=== Swap/Staking Configuration ===', COLORS.CYAN)}`);
@@ -689,46 +730,57 @@ async function handleSwapsAndStaking(wallets) {
     logWindow.log(`${colorText('=================================', COLORS.CYAN)}`);
 
     const runSwapCycle = async () => {
-      for (const wallet of walletList) {
-        logWindow.log(`${colorText(`Processing wallet: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`, COLORS.WHITE)}`);
+      for (const network of selectedNetworks) {
+        logWindow.log(`${colorText(`Processing network: ${network.name}`, COLORS.CYAN)}`);
+        for (const walletObj of walletList) {
+          // Initialize wallet for the current network if not already initialized
+          let wallet = walletObj.wallet;
+          if (walletObj.network.name !== network.name) {
+            const result = await initializeWallet(walletObj.privateKey, network);
+            wallet = result.wallet;
+          }
+          logWindow.log(`${colorText(`Processing wallet: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)} on ${network.name}`, COLORS.WHITE)}`);
 
-        // USDC to R2USD Swaps
-        logWindow.log(`${colorText(`Starting ${parsedNumTxs} USDC to R2USD swaps`, COLORS.CYAN)}`);
-        for (let i = 1; i <= parsedNumTxs; i++) {
-          logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} USDC to R2USD`, COLORS.YELLOW)}`);
-          const success = await swapUSDCtoR2USD(wallet, parsedAmount);
-          logWindow.log(
-            `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
-          );
-          if (!success) break;
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+          // USDC to R2USD Swaps
+          logWindow.log(`${colorText(`Starting ${parsedNumTxs} USDC to R2USD swaps`, COLORS.CYAN)}`);
+          for (let i = 1; i <= parsedNumTxs; i++) {
+            logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} USDC to R2USD`, COLORS.YELLOW)}`);
+            const success = await swapUSDCtoR2USD(wallet, parsedAmount, network);
+            logWindow.log(
+              `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+            );
+            if (!success) break;
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+          }
+
+          // R2USD to USDC Swaps
+          logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to USDC swaps`, COLORS.CYAN)}`);
+          for (let i = 1; i <= parsedNumTxs; i++) {
+            logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to USDC`, COLORS.YELLOW)}`);
+            const success = await swapR2USDtoUSDC(wallet, parsedAmount, network);
+            logWindow.log(
+              `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+            );
+            if (!success) break;
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+          }
+
+          // R2USD to sR2USD Staking (only for Sepolia)
+          if (network.name === 'sepolia') {
+            logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to sR2USD stakes`, COLORS.CYAN)}`);
+            for (let i = 1; i <= parsedNumTxs; i++) {
+              logWindow.log(`${colorText(`Stake ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to sR2USD`, COLORS.YELLOW)}`);
+              const success = await stakeR2USD(wallet, parsedAmount, network);
+              logWindow.log(
+                `${colorText(`Stake ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+              );
+              if (!success) break;
+              await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+            }
+          }
+
+          logWindow.log(`${colorText(`Completed all tasks for ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)} on ${network.name}`, COLORS.GREEN)}`);
         }
-
-        // R2USD to USDC Swaps
-        logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to USDC swaps`, COLORS.CYAN)}`);
-        for (let i = 1; i <= parsedNumTxs; i++) {
-          logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to USDC`, COLORS.YELLOW)}`);
-          const success = await swapR2USDtoUSDC(wallet, parsedAmount);
-          logWindow.log(
-            `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
-          );
-          if (!success) break;
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
-        }
-
-        // R2USD to sR2USD Staking
-        logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to sR2USD stakes`, COLORS.CYAN)}`);
-        for (let i = 1; i <= parsedNumTxs; i++) {
-          logWindow.log(`${colorText(`Stake ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to sR2USD`, COLORS.YELLOW)}`);
-          const success = await stakeR2USD(wallet, parsedAmount);
-          logWindow.log(
-            `${colorText(`Stake ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
-          );
-          if (!success) break;
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
-        }
-
-        logWindow.log(`${colorText(`Completed all tasks for ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`, COLORS.GREEN)}`);
       }
 
       logWindow.log(`${colorText(`All swaps/stakes completed! Pausing for 24 hours...`, COLORS.YELLOW)}`);
@@ -755,10 +807,11 @@ async function main() {
     loadProxies();
     loadPrivateKeys();
     const wallets = [];
+    // Initialize each private key only once for the first network initially
     for (const privateKey of privateKeys) {
       try {
-        const result = await initializeWallet(privateKey);
-        wallets.push(result.wallet);
+        const result = await initializeWallet(privateKey, NETWORKS[0]);
+        wallets.push({ privateKey, wallet: result.wallet, network: NETWORKS[0] });
       } catch (error) {
         // Skip failed wallet initialization
       }
@@ -767,7 +820,8 @@ async function main() {
       logWindow.log(`${colorText(`No valid wallets initialized. Exiting.`, COLORS.RED)}`);
       process.exit(1);
     }
-    await updateWalletInfo(wallets);
+    // Update info for the first network's wallets initially
+    await updateWalletInfo(wallets.map(w => w.wallet), NETWORKS[0]);
 
     // Show menu immediately
     await showMenu(wallets);
