@@ -10,6 +10,57 @@ using Plots
 using Dates
 using Statistics
 using Printf
+if !isfile(DATA_PATH)
+    println("Generating fake data...")
+    names = ["Alice", "Bob", "Charlie", "Diana"]
+    regions = ["North", "South", "East", "West"]
+    products = ["Widget", "Gadget", "Thingy", "Doohickey"]
+  ==== Section 1: Generate Fake Data (if not exists) ====
+if !isfile(DATA_PATH)
+    println("Generating fake data...")
+    names = ["Alice", "Bob", "Charlie", "Diana"]
+    regions = ["North", "South", "East", "West"]
+    products = ["Widget", "Gadget", "Thingy", "Doohickey"]
+
+    df = DataFrame(Date=Date[], Name=String[], Region=String[], Product=String[], Quantity=Int[], Price=Float64[])
+    for i in 1:1000
+        date = Date(2024,1,1) + Day(rand(0:364))
+        name = rand(names)
+        region = rand(regions)
+        product = rand(products)
+        quantity = rand(1:10)
+        price = round(rand(10.0:0.5:100.0), digits=2)
+        push!(df, (date, name, region, product, quantity, price))
+    end
+    CSV.write(DATA_PATH, df)
+    println("Fake data saved to $DATA_PATH")
+end
+
+# ==== Section 2: Load and Inspect ====
+println("\nLoading data...")
+data = CSV.read(DATA_PATH, DataFrame)
+println("First 5 rows:")
+show(data[1:5, :])
+
+# ==== Section 3: Clean Data ====
+function clean_data(df::DataFrame)
+    df = dropmissing(df)
+    df = filter(row -> row.Quantity > 0 && row.Price > 0.0, df)
+    return df
+end
+
+data = clean_data(data)
+
+# ==== Section 4: Analysis ====
+
+# Total sales column
+data.Sales = data.Quantity .* data.Price
+
+# Daily totals
+daily_sales = combine(groupby(data, :Date), :Sales => sum => :TotalSales)
+
+# Top products
+product_sales = combine(groupby(data, :Product), :Sales => su
 
 # Constants
 const DATA_PATH = "sales_data.csv"
