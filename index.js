@@ -49,11 +49,19 @@ const NETWORKS = [
   },
   {
     name: 'plume_testnet',
-    chainId: 98867, // Plume Testnet chainId (assumed, please verify)
-    explorer: 'https://testnet-explorer.plumenetwork.xyz', // Update if explorer URL is different
+    chainId: 98867,
+    explorer: 'https://testnet-explorer.plumenetwork.xyz',
     rpcUrls: [
       'https://testnet-rpc.plumenetwork.xyz',
-      'https://testnet-explorer.plumenetwork.xyz/'
+      'https://testnet-explorer.plumenetwork.xyz/',
+    ],
+  },
+  {
+    name: 'arbitrum_sepolia',
+    chainId: 421614,
+    explorer: 'https://sepolia.arbiscan.io',
+    rpcUrls: [
+      'https://sepolia-rollup.arbitrum.io/rpc',
     ],
   },
 ];
@@ -82,7 +90,7 @@ const statusBar = blessed.box({
   left: 0,
   width: '100%',
   height: 1,
-  content: ' [R2-AUTO-BOT v1.0] - SYSTEM ONLINE ',
+  content: ' [R2-AUTO-BOT v2.0] - SYSTEM ONLINE ',
   style: { bg: COLORS.GREEN, fg: 'black', bold: true },
 });
 
@@ -624,8 +632,9 @@ function showBanner() {
 
 async function showMenu(wallets) {
   const menuItems = [
-    `1. Swaps and Staking`,
-    `2. Exit`,
+    `1. Swaps and Staking (Manual)`,
+    `2. Auto Run All`,
+    `3. Exit`,
   ];
   logWindow.log(`${colorText('========== R2 AUTO BOT MENU ==========', COLORS.WHITE)}`);
   for (const item of menuItems) {
@@ -635,16 +644,19 @@ async function showMenu(wallets) {
   }
   logWindow.log(`${colorText('=====================================', COLORS.WHITE)}`);
 
-  const option = await getInput('Select an option (1-2): ');
+  const option = await getInput('Select an option (1-3): ');
   switch (option) {
     case '1':
       await handleSwapsAndStaking(wallets);
       break;
     case '2':
+      await handleAutoRunAll(wallets);
+      break;
+    case '3':
       logWindow.log(`${colorText(`Exiting application...`, COLORS.GRAY)}`);
       process.exit(0);
     default:
-      logWindow.log(`${colorText('Invalid option. Please select 1-2.', COLORS.YELLOW)}`);
+      logWindow.log(`${colorText('Invalid option. Please select 1-3.', COLORS.YELLOW)}`);
       await showMenu(wallets);
       break;
   }
@@ -792,6 +804,97 @@ async function handleSwapsAndStaking(wallets) {
     await runSwapCycle();
   } catch (error) {
     logWindow.log(`${colorText(`Error in swap/staking cycle: ${error.message}`, COLORS.RED)}`);
+    await showMenu(wallets);
+  }
+}
+
+async function handleAutoRunAll(wallets) {
+  try {
+    // Prompt for amount and number of transactions
+    logWindow.log(`${colorText('=== Auto Run All Configuration ===', COLORS.CYAN)}`);
+    const amount = await getInput('Enter amount for swaps/staking: ');
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      logWindow.log(`${colorText('Invalid amount. Enter a positive number.', COLORS.RED)}`);
+      await showMenu(wallets);
+      return;
+    }
+    const numTxs = await getInput('Enter number of transactions: ');
+    const parsedNumTxs = parseInt(numTxs);
+    if (isNaN(parsedNumTxs) || parsedNumTxs <= 0) {
+      logWindow.log(`${colorText('Invalid number. Enter a positive integer.', COLORS.RED)}`);
+      await showMenu(wallets);
+      return;
+    }
+    logWindow.log(`${colorText('=================================', COLORS.CYAN)}`);
+
+    const runAutoCycle = async () => {
+      // Process networks in order: sepolia, plume_testnet, arbitrum_sepolia
+      for (const network of NETWORKS) {
+        logWindow.log(`${colorText(`Processing network: ${network.name}`, COLORS.CYAN)}`);
+        for (const walletObj of wallets) {
+          // Initialize wallet for the current network
+          let wallet;
+          try {
+            const result = await initializeWallet(walletObj.privateKey, network);
+            wallet = result.wallet;
+          } catch (error) {
+            logWindow.log(`${colorText(`Skipping wallet ${walletObj.wallet.address.slice(0, 6)}... on ${network.name} due to initialization error`, COLORS.RED)}`);
+            continue;
+          }
+          logWindow.log(`${colorText(`Processing wallet: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)} on ${network.name}`, COLORS.WHITE)}`);
+
+          // USDC to R2USD Swaps
+          logWindow.log(`${colorText(`Starting ${parsedNumTxs} USDC to R2USD swaps`, COLORS.CYAN)}`);
+          for (let i = 1; i <= parsedNumTxs; i++) {
+            logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} USDC to R2USD`, COLORS.YELLOW)}`);
+            const success = await swapUSDCtoR2USD(wallet, parsedAmount, network);
+            logWindow.log(
+              `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+            );
+            if (!success) break;
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+          }
+
+          // R2USD to USDC Swaps
+          logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to USDC swaps`, COLORS.CYAN)}`);
+          for (let i = 1; i <= parsedNumTxs; i++) {
+            logWindow.log(`${colorText(`Swap ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to USDC`, COLORS.YELLOW)}`);
+            const success = await swapR2USDtoUSDC(wallet, parsedAmount, network);
+            logWindow.log(
+              `${colorText(`Swap ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+            );
+            if (!success) break;
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+          }
+
+          // R2USD to sR2USD Staking (only for Sepolia)
+          if (network.name === 'sepolia') {
+            logWindow.log(`${colorText(`Starting ${parsedNumTxs} R2USD to sR2USD stakes`, COLORS.CYAN)}`);
+            for (let i = 1; i <= parsedNumTxs; i++) {
+              logWindow.log(`${colorText(`Stake ${i}/${parsedNumTxs}: ${parsedAmount} R2USD to sR2USD`, COLORS.YELLOW)}`);
+              const success = await stakeR2USD(wallet, parsedAmount, network);
+              logWindow.log(
+                `${colorText(`Stake ${i} ${success ? 'completed!' : 'failed.'}`, success ? COLORS.GREEN : COLORS.RED)}`
+              );
+              if (!success) break;
+              await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+            }
+          }
+
+          logWindow.log(`${colorText(`Completed all tasks for ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)} on ${network.name}`, COLORS.GREEN)}`);
+        }
+      }
+
+      logWindow.log(`${colorText(`All networks processed! Pausing for 24 hours...`, COLORS.YELLOW)}`);
+      await new Promise(resolve => setTimeout(resolve, 24 * 60 * 60 * 1000)); // 24-hour delay
+      logWindow.log(`${colorText(`Restarting auto-run cycle...`, COLORS.CYAN)}`);
+      await runAutoCycle(); // Restart the cycle
+    };
+
+    await runAutoCycle();
+  } catch (error) {
+    logWindow.log(`${colorText(`Error in auto-run cycle: ${error.message}`, COLORS.RED)}`);
     await showMenu(wallets);
   }
 }
