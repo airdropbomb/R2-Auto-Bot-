@@ -61,20 +61,20 @@ const NETWORKS = {
     chainId: 98867,
     rpcUrls: [
       'https://testnet-rpc.plumenetwork.xyz',
-      'https://rpc.testnet.plumenetwork.xyz', // Fallback; update if you have a better one
+      'https://rpc.testnet.plumenetwork.xyz',
     ],
     explorer: 'https://testnet-explorer.plumenetwork.xyz',
     symbol: 'ETH',
     contracts: {
-      USDC_ADDRESS: '0xef84994ef411c4981328ffce5fda41cd3803fae4', // From old script
-      R2USD_ADDRESS: '0x20c54c5f742f123abb49a982bfe0af47edb38756', // From old script
-      SR2USD_ADDRESS: '0xbd6b25c4132f09369c354bee0f7be777d7d434fa', // From old script
-      USDC_TO_R2USD_CONTRACT: '0x20c54c5f742f123abb49a982bfe0af47edb38756', // From old script
-      R2USD_TO_USDC_CONTRACT: '0x07abd582df3d3472aa687a0489729f9f0424b1e3', // From old script
-      STAKE_R2USD_CONTRACT: '0xbd6b25c4132f09369c354bee0f7be777d7d434fa', // From old script
-      USDC_TO_R2USD_METHOD_ID: '0x095e7a95', // From old script
-      R2USD_TO_USDC_METHOD_ID: '0x3df02124', // From old script
-      STAKE_R2USD_METHOD_ID: '0x1a5f0f00', // From old script
+      USDC_ADDRESS: '0xef84994ef411c4981328ffce5fda41cd3803fae4',
+      R2USD_ADDRESS: '0x20c54c5f742f123abb49a982bfe0af47edb38756',
+      SR2USD_ADDRESS: '0xbd6b25c4132f09369c354bee0f7be777d7d434fa',
+      USDC_TO_R2USD_CONTRACT: '0x20c54c5f742f123abb49a982bfe0af47edb38756',
+      R2USD_TO_USDC_CONTRACT: '0x07abd582df3d3472aa687a0489729f9f0424b1e3',
+      STAKE_R2USD_CONTRACT: '0xbd6b25c4132f09369c354bee0f7be777d7d434fa',
+      USDC_TO_R2USD_METHOD_ID: '0x095e7a95',
+      R2USD_TO_USDC_METHOD_ID: '0x3df02124',
+      STAKE_R2USD_METHOD_ID: '0x1a5f0f00',
     },
   },
 };
@@ -385,12 +385,12 @@ async function approveToken(wallet, tokenAddress, spenderAddress, amount, networ
     const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
     const decimals = await tokenContract.decimals();
     const currentAllowance = await tokenContract.allowance(wallet.address, spenderAddress);
-    if (currentAllowance.gte(ethers.utils.parseUnits(amount.toString(), decimals))) {
+    const amountInWei = ethers.utils.parseUnits(amount.toString(), decimals);
+    if (currentAllowance.gte(amountInWei)) {
       logWindow.log(`${colorText('Sufficient allowance already exists', COLORS.GRAY)}`);
       return true;
     }
     logWindow.log(`${colorText(`Approving ${amount} tokens for spending...`, COLORS.MAGENTA)}`);
-    const amountInWei = ethers.utils.parseUnits(amount.toString(), decimals);
     const tx = await tokenContract.approve(spenderAddress, amountInWei, { gasLimit: 100000 });
     logWindow.log(`${colorText(`Approval transaction sent: ${tx.hash}`, COLORS.GREEN)}`);
     logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${tx.hash}`, COLORS.GRAY)}`);
@@ -580,7 +580,7 @@ async function stakeR2USD(wallet, amount, network) {
       !isValidAddress(network.contracts.STAKE_R2USD_CONTRACT) ||
       !isValidAddress(network.contracts.SR2USD_ADDRESS)
     ) {
-      logWindow.log(`${colorText(`Invalid contract addresses for staking on ${network.name}. Skipping.`, COLORS.RED)}`);
+      logWindow.log(`${colorText(`Invalid contract addresses for staking on ${network.name}. Verify addresses on ${network.explorer}.`, COLORS.RED)}`);
       return false;
     }
     const r2usdBalance = await checkBalance(wallet, network.contracts.R2USD_ADDRESS);
@@ -591,6 +591,9 @@ async function stakeR2USD(wallet, amount, network) {
     }
     const r2usdContract = new ethers.Contract(network.contracts.R2USD_ADDRESS, ERC20_ABI, wallet);
     const decimals = await r2usdContract.decimals();
+    if (decimals !== 6) {
+      logWindow.log(`${colorText(`Warning: R2USD has ${decimals} decimals (expected 6). Amount may be incorrect.`, COLORS.YELLOW)}`);
+    }
     const amountInWei = ethers.utils.parseUnits(amount.toString(), decimals);
     const currentAllowance = await r2usdContract.allowance(wallet.address, network.contracts.STAKE_R2USD_CONTRACT);
     if (currentAllowance.lt(amountInWei)) {
@@ -609,41 +612,73 @@ async function stakeR2USD(wallet, amount, network) {
     } else {
       logWindow.log(`${colorText('Sufficient allowance already exists', COLORS.GRAY)}`);
     }
-    let data;
-    if (network.name === 'Sepolia' || network.name === 'Plume Testnet') {
-      data =
-        network.contracts.STAKE_R2USD_METHOD_ID +
-        amountInWei.toHexString().slice(2).padStart(64, '0') +
-        '0'.repeat(576);
-    } else {
-      const stakeContract = new ethers.Contract(network.contracts.STAKE_R2USD_CONTRACT, STAKE_ABI, wallet);
-      data = stakeContract.interface.encodeFunctionData('stake', [amountInWei]);
-    }
+    // Try old script’s method ID first
+    logWindow.log(`${colorText(`Attempting staking with method ID ${network.contracts.STAKE_R2USD_METHOD_ID}...`, COLORS.YELLOW)}`);
+    let data =
+      network.contracts.STAKE_R2USD_METHOD_ID +
+      amountInWei.toHexString().slice(2).padStart(64, '0') +
+      '0'.repeat(576);
     const gasFees = await estimateGasFees(wallet.provider);
-    const tx = {
+    let tx = {
       to: network.contracts.STAKE_R2USD_CONTRACT,
       data: data,
       ...gasFees,
     };
-    const gasLimit = await estimateGas(wallet, tx);
+    let gasLimit = await estimateGas(wallet, tx);
     logWindow.log(`${colorText(`Estimated gas limit: ${gasLimit.toString()}`, COLORS.GRAY)}`);
     logWindow.log(`${colorText(`Initiating staking: ${amount} R2USD to sR2USD on ${network.name}`, COLORS.YELLOW)}`);
-    const stopSpinner = showSpinner(
+    let stopSpinner = showSpinner(
       `Staking ${amount} R2USD to sR2USD...`,
       `Staking completed: ${amount} R2USD to sR2USD`,
       60
     );
-    const signedTx = await wallet.sendTransaction({
-      ...tx,
-      gasLimit,
-    });
-    logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
-    logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
-    const receipt = await signedTx.wait();
-    stopSpinner();
-    if (receipt.status === 0) {
-      logWindow.log(`${colorText(`Transaction reverted. Check contract state or logs.`, COLORS.RED)}`);
-      return false;
+    let signedTx;
+    try {
+      signedTx = await wallet.sendTransaction({
+        ...tx,
+        gasLimit,
+      });
+      logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
+      logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
+      const receipt = await signedTx.wait();
+      stopSpinner();
+      if (receipt.status === 0) {
+        logWindow.log(`${colorText(`Transaction reverted with method ID ${network.contracts.STAKE_R2USD_METHOD_ID}. Trying fallback ABI...`, COLORS.YELLOW)}`);
+        throw new Error('Transaction reverted');
+      }
+      logWindow.log(`${colorText(`Staking successful with method ID ${network.contracts.STAKE_R2USD_METHOD_ID}`, COLORS.GREEN)}`);
+    } catch (error) {
+      stopSpinner();
+      logWindow.log(`${colorText(`Failed with method ID ${network.contracts.STAKE_R2USD_METHOD_ID}: ${error.message}`, COLORS.RED)}`);
+      // Fallback to STAKE_ABI
+      logWindow.log(`${colorText(`Attempting staking with STAKE_ABI (stake(uint256))...`, COLORS.YELLOW)}`);
+      const stakeContract = new ethers.Contract(network.contracts.STAKE_R2USD_CONTRACT, STAKE_ABI, wallet);
+      data = stakeContract.interface.encodeFunctionData('stake', [amountInWei]);
+      tx = {
+        to: network.contracts.STAKE_R2USD_CONTRACT,
+        data: data,
+        ...gasFees,
+      };
+      gasLimit = await estimateGas(wallet, tx);
+      logWindow.log(`${colorText(`Estimated gas limit: ${gasLimit.toString()}`, COLORS.GRAY)}`);
+      stopSpinner = showSpinner(
+        `Staking ${amount} R2USD to sR2USD (fallback)...`,
+        `Staking completed: ${amount} R2USD to sR2USD`,
+        60
+      );
+      signedTx = await wallet.sendTransaction({
+        ...tx,
+        gasLimit,
+      });
+      logWindow.log(`${colorText(`Transaction sent: ${signedTx.hash}`, COLORS.GREEN)}`);
+      logWindow.log(`${colorText(`Explorer: ${network.explorer}/tx/${signedTx.hash}`, COLORS.GRAY)}`);
+      const receipt = await signedTx.wait();
+      stopSpinner();
+      if (receipt.status === 0) {
+        logWindow.log(`${colorText(`Transaction reverted with STAKE_ABI. Check contract address ${network.contracts.STAKE_R2USD_CONTRACT} and ABI on ${network.explorer}.`, COLORS.RED)}`);
+        return false;
+      }
+      logWindow.log(`${colorText(`Staking successful with STAKE_ABI`, COLORS.GREEN)}`);
     }
     const newR2USDBalance = await checkBalance(wallet, network.contracts.R2USD_ADDRESS);
     const newSR2USDBalance = await checkBalance(wallet, network.contracts.SR2USD_ADDRESS);
@@ -656,6 +691,7 @@ async function stakeR2USD(wallet, amount, network) {
     if (error.transactionHash) {
       logWindow.log(`${colorText(`Failed transaction: ${network.explorer}/tx/${error.transactionHash}`, COLORS.RED)}`);
     }
+    logWindow.log(`${colorText(`Verify STAKE_R2USD_CONTRACT (${network.contracts.STAKE_R2USD_CONTRACT}) and SR2USD_ADDRESS (${network.contracts.SR2USD_ADDRESS}) on ${network.explorer}.`, COLORS.YELLOW)}`);
     return false;
   }
 }
@@ -826,6 +862,9 @@ async function handleSwapsAndStaking(wallets) {
     const runSwapCycle = async () => {
       for (const network of selectedNetworks) {
         logWindow.log(`${colorText(`Processing network: ${network.name}`, COLORS.CYAN)}`);
+        if (network.name !== 'Sepolia') {
+          logWindow.log(`${colorText(`Warning: Staking addresses may be Sepolia-specific. Verify STAKE_R2USD_CONTRACT (${network.contracts.STAKE_R2USD_CONTRACT}) on ${network.explorer}.`, COLORS.YELLOW)}`);
+        }
         for (const walletObj of walletList) {
           let wallet = walletObj.wallet;
           if (walletObj.network.name !== network.name) {
@@ -907,6 +946,9 @@ async function handleAutoRunAll(wallets) {
       const networkList = Object.values(NETWORKS);
       for (const network of networkList) {
         logWindow.log(`${colorText(`Processing network: ${network.name}`, COLORS.CYAN)}`);
+        if (network.name !== 'Sepolia') {
+          logWindow.log(`${colorText(`Warning: Staking addresses may be Sepolia-specific. Verify STAKE_R2USD_CONTRACT (${network.contracts.STAKE_R2USD_CONTRACT}) on ${network.explorer}.`, COLORS.YELLOW)}`);
+        }
         for (const walletObj of wallets) {
           let wallet;
           try {
