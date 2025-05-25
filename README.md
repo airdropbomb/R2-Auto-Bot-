@@ -48,8 +48,9 @@ Before you dive in, make sure you have:
 
 Get up and running in minutes:
 
-```bash
+
 # 1. Clone this repository
+```bash
 git clone https://github.com/airdropbomb/R2-Auto-Bot-.git && cd R2-Auto-Bot-
 ```
 
