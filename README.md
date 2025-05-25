@@ -50,15 +50,10 @@ Get up and running in minutes:
 
 ```bash
 # 1. Clone this repository
-git clone https://github.com/Kazuha787/R2-Auto-Bot-.git
+git clone https://github.com/airdropbomb/R2-Auto-Bot-.git && cd R2-Auto-Bot-
 ```
 
-# 2. Navigate into project directory
-```
-cd R2-Auto-Bot-
-```
-
-# 3. Install required dependencies
+# 2. Install required dependencies
 ```
 npm install
 ```
@@ -134,7 +129,7 @@ Here's a sneak peek of the bot in action:
 
 ## 🌍 Connect With Us
 
-- Telegram: [Join kazuha Community](https://t.me/im_offical_kazuha)
+- Telegram: [Join Community](https://t.me/airdropbombnode)
 
 > **Stay smart, stay safe, and automate your DeFi journey!**
 
